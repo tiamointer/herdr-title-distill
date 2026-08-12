@@ -1,0 +1,20 @@
+interface:
+  display_name: "OMP Herdr 标题同步"
+  short_description: "管理无模型 OMP→Herdr 短标题同步"
+  default_prompt: "检查并维护本机 OMP 到 Herdr 的无模型短标题同步器；优先运行隔离验证，涉及真实 pane/tab 时再运行 live 验证。"
+compatibility:
+  canonical_format: "agent-skills"
+  adapter_targets:
+    - "openai"
+activation:
+  mode: "semantic"
+  paths: []
+execution:
+  context: "inline"
+  shell: "bash"
+  trust:
+    source_tier: "local"
+remote_inline_execution: "forbid"
+remote_metadata_policy: "allow-metadata-only"
+degradation:
+  openai: "native-agent-skill-with-local-runtime-extension"
