@@ -1,8 +1,4 @@
-import {
-  createHerdrSocketClient,
-  syncTitle,
-  visibleCharCount,
-} from "../extension/index.ts";
+import { createHerdrSocketClient, syncGeneratedTitle, visibleCharCount } from "../src/core.ts";
 
 function argumentValue(name: string): string {
   const index = process.argv.indexOf(name);
@@ -18,12 +14,9 @@ if (!socketPath) throw new Error("HERDR_SOCKET_PATH is required");
 const paneId = argumentValue("--pane");
 const title = argumentValue("--title");
 const stateDir = argumentValue("--state-dir");
-const aliasPathIndex = process.argv.indexOf("--alias-path");
-const aliasPath = aliasPathIndex >= 0 ? argumentValue("--alias-path") : undefined;
-const result = await syncTitle(title, createHerdrSocketClient(socketPath), {
+const result = await syncGeneratedTitle(title, createHerdrSocketClient(socketPath), {
   paneId,
   stateDir,
-  ...(aliasPath ? { aliasPath } : {}),
 });
 
 console.log(JSON.stringify({ ...result, visible_chars: result.title ? visibleCharCount(result.title) : 0 }));

@@ -1,7 +1,7 @@
 interface:
-  display_name: "OMP Herdr 标题同步"
-  short_description: "管理无模型 OMP→Herdr 短标题同步"
-  default_prompt: "检查并维护本机 OMP 到 Herdr 的无模型短标题同步器；优先运行隔离验证，涉及真实 pane/tab 时再运行 live 验证。"
+  display_name: "Herdr 标题提炼"
+  short_description: "跨 agent 提炼当前目标并更新 Herdr 标题"
+  default_prompt: "检查并维护 Herdr Title Distill 跨 harness 智能命名服务；先运行隔离验证，涉及真实完成触发或 pane/tab 行为时运行 --live --all-harnesses。"
 compatibility:
   canonical_format: "agent-skills"
   adapter_targets:
@@ -17,4 +17,4 @@ execution:
 remote_inline_execution: "forbid"
 remote_metadata_policy: "allow-metadata-only"
 degradation:
-  openai: "native-agent-skill-with-local-runtime-extension"
+  openai: "native-agent-skill-with-local-herdr-service"
