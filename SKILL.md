@@ -3,7 +3,7 @@ name: herdr-title-distill
 description: "维护 Herdr 的跨 harness 模型驱动智能命名服务：安装、迁移、验证、卸载和排查 OMP、Pi、Claude Code、Codex、Grok、Copilot、Hermes 的 pane/tab 自动标题。服务读取最近已完成的主回合，用 OMP 标题模型提炼 2–10 个可见字符；目标变化即改名，单-pane tab 跟随，multi-pane tab 与手工名称受保护。用户提到 Herdr 智能命名、跨 agent 标题、标题不更新、名称漂移或本服务故障时使用。不要用于普通手工改名或非 Herdr 终端标题管理。"
 user-invocable: true
 metadata:
-  version: "3.0.0"
+  version: "3.1.0"
   status: "beta"
 ---
 
@@ -28,7 +28,10 @@ metadata:
 - pane 仅在空名、数字名或仍等于上次自动标题时更新；其他名称视为手工名。tab 仅在 `pane_count == 1` 时更新。
 - 所有权状态保存在 `~/.config/herdr-title-distill/state/`，按 Herdr terminal ID 分文件；旧 `~/.config/omp-herdr-title-sync/state/` 只作为迁移来源。
 - 服务通过 Herdr socket 调用 `agent.list`、`pane.get/rename`、`tab.get/rename`；不修改 Herdr 本体，也不改现有 harness hook。
+- daemon 启动时盯住默认 socket 与 `~/.config/herdr/sessions/*/herdr.sock`，每 `HERDR_TITLE_DISTILL_RESCAN_MS`（默认 30000 ms）重扫，新会话自动接管，无需手动激活。
+- 每个会话独立 `DistillService`，已处理状态分文件存（`service.json` 为 default，`service.<session>.json` 为命名会话），pane ID 跨会话不通用。
+- 日志事件带 `session` 字段；`session-watch-started` 表示该会话已被接管。
 
 ## Failure Handling
 
-标题模型失败、超时、返回非法标题，transcript 不完整，或 Herdr 不可用时，保留现状并记录日志；不猜测、不截断。若名称或注册所有权无法证明，默认保护现状。修改提示词、adapter、完成触发、所有权规则或安装路径后，必须重跑隔离验证和 `--live --all-harnesses`。
+标题模型失败、超时、返回非法标题，transcript 不完整，或 Herdr 不可用时，保留现状并记录日志；不猜测、不截断。若名称或注册所有权无法证明，默认保护现状。修改提示词、adapter、完成触发、所有权规则或安装路径后，必须重跑隔离验证和 `--live --all-harnesses`。标题不更新时先查 `service.log` 的 `session-watch-started` 与 `title-synced`；命名会话未被接管时等一个重扫周期（默认 30 秒）再确认 `~/.config/herdr/sessions/<名字>/herdr.sock` 存在。
