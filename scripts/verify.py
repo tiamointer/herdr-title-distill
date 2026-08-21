@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import plistlib
 import shlex
 import shutil
 import subprocess
@@ -155,6 +156,8 @@ def installer_command(temp_root: Path) -> list[str]:
         str(temp_root / "skills"),
         "--plist",
         str(temp_root / "service.plist"),
+        "--service-label",
+        "com.laike.herdr-title-distill.verify-sandbox",
         "--legacy-state-dir",
         str(temp_root / "legacy-state"),
         "--legacy-project-root",
@@ -183,9 +186,28 @@ def verify_installer_lifecycle(temp_root: Path) -> dict[str, Any]:
     require(first.get("status") == "installed", str(first))
     require(target.is_symlink(), "new extension link missing")
     require(skill_target.is_symlink(), "new skill link missing")
-    require(target.resolve() == (SKILL_ROOT / "extension" / "index.ts").resolve(), "extension link is wrong")
-    require(skill_target.resolve() == SKILL_ROOT.resolve(), "skill link is wrong")
+    sandbox_plist = plistlib.loads((temp_root / "service.plist").read_bytes())
+    require(sandbox_plist.get("Label") == "com.laike.herdr-title-distill.verify-sandbox", "sandbox plist kept the real label")
+    require(
+        "HERDR_TITLE_DISTILL_SOCKET_PATH" not in sandbox_plist.get("EnvironmentVariables", {}),
+        "sandbox plist pinned a session socket",
+    )
+    poisoned = parse_json_output(
+        run(command, env={**os.environ, "HERDR_SOCKET_PATH": "/tmp/herdr-title-distill-poison.sock"}),
+        "sandbox poisoned-env reinstall",
+    )
+    require(poisoned.get("status") == "installed", str(poisoned))
+    sandbox_plist = plistlib.loads((temp_root / "service.plist").read_bytes())
+    require(
+        "HERDR_TITLE_DISTILL_SOCKET_PATH" not in sandbox_plist.get("EnvironmentVariables", {}),
+        "installer inherited the caller's HERDR_SOCKET_PATH",
+    )
+    require(
+        subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/com.laike.herdr-title-distill"], capture_output=True).returncode == 0,
+        "real launchd registration was torn down by the sandbox lifecycle",
+    )
     require((temp_root / "service.plist").is_file(), "launchd plist was not written")
+    require(skill_target.resolve() == SKILL_ROOT.resolve(), "skill link is wrong")
 
     status = parse_json_output(run([*command, "--status"]), "sandbox status")
     require(status.get("status") == "installed", str(status))

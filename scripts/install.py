@@ -10,6 +10,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -208,18 +209,17 @@ def daemon_environment(state_dir: Path) -> dict[str, str]:
             f"{Path.home()}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
         ),
     }
-    socket_path = os.environ.get("HERDR_SOCKET_PATH")
-    if socket_path:
-        environment["HERDR_TITLE_DISTILL_SOCKET_PATH"] = socket_path
+    # Deliberately no HERDR_TITLE_DISTILL_SOCKET_PATH: the daemon discovers the
+    # default socket plus every named-session socket on its own. Inheriting the
+    # caller's HERDR_SOCKET_PATH would pin the daemon to one session.
     return environment
 
-
-def write_launch_agent(plist_path: Path, state_dir: Path) -> None:
+def write_launch_agent(plist_path: Path, state_dir: Path, service_label: str = SERVICE_LABEL) -> None:
     bun_path = shutil.which("bun")
     if bun_path is None:
         raise RuntimeError("bun-not-found")
     payload = {
-        "Label": SERVICE_LABEL,
+        "Label": service_label,
         "ProgramArguments": [bun_path, str(SOURCE_DAEMON)],
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
@@ -247,31 +247,51 @@ def launchctl(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def service_loaded() -> bool:
+def plist_label(plist_path: Path) -> str:
+    """Service identity comes from the registration file being managed, so a
+    sandbox plist (tests) can never bootout the real registration: launchctl
+    resolves bootout by the plist's Label, and the sandbox label differs."""
+    try:
+        with plist_path.open("rb") as handle:
+            label = plistlib.load(handle).get("Label")
+    except (OSError, plistlib.InvalidFileException):
+        return SERVICE_LABEL
+    return label if isinstance(label, str) and label else SERVICE_LABEL
+
+
+def service_loaded(label: str = SERVICE_LABEL) -> bool:
     if sys.platform != "darwin":
         return False
-    return launchctl("print", f"gui/{os.getuid()}/{SERVICE_LABEL}").returncode == 0
+    return launchctl("print", f"gui/{os.getuid()}/{label}").returncode == 0
 
 
 def restart_service(plist_path: Path) -> str:
     if sys.platform != "darwin":
         return "unsupported-platform"
     domain = f"gui/{os.getuid()}"
-    if service_loaded():
-        launchctl("bootout", domain, str(plist_path))
+    label = plist_label(plist_path)
+    if service_loaded(label):
+        launchctl("bootout", f"{domain}/{label}")
     boot = launchctl("bootstrap", domain, str(plist_path))
+    for _attempt in range(3):
+        if boot.returncode == 0:
+            break
+        # launchd may still be tearing down the boot-out above; retry briefly.
+        time.sleep(0.3)
+        boot = launchctl("bootstrap", domain, str(plist_path))
     if boot.returncode != 0:
         raise RuntimeError(boot.stderr.strip() or "launchctl-bootstrap-failed")
-    launchctl("kickstart", "-k", f"{domain}/{SERVICE_LABEL}")
-    return "running" if service_loaded() else "load-failed"
+    launchctl("kickstart", "-k", f"{domain}/{label}")
+    return "running" if service_loaded(label) else "load-failed"
 
 
 def stop_service(plist_path: Path) -> str:
     if sys.platform != "darwin":
         return "unsupported-platform"
-    if not service_loaded():
+    label = plist_label(plist_path)
+    if not service_loaded(label):
         return "not-loaded"
-    completed = launchctl("bootout", f"gui/{os.getuid()}", str(plist_path))
+    completed = launchctl("bootout", f"gui/{os.getuid()}/{label}")
     return "stopped" if completed.returncode == 0 else "stop-failed"
 
 
@@ -283,6 +303,7 @@ def install(
     start_service: bool,
     legacy_state_dir: Path,
     legacy_project_root: Path,
+    service_label: str = SERVICE_LABEL,
 ) -> int:
     if not SOURCE_EXTENSION.is_file() or not SOURCE_DAEMON.is_file():
         emit({"status": "error", "reason": "source-missing", "source": str(SKILL_ROOT)})
@@ -338,9 +359,8 @@ def install(
         obsolete.append(str(legacy_target))
     if legacy_skill_target.is_symlink():
         legacy_skill_target.unlink()
-        obsolete.append(str(legacy_skill_target))
+    write_launch_agent(plist_path, state_dir, service_label)
 
-    write_launch_agent(plist_path, state_dir)
     service = restart_service(plist_path) if start_service else "not-started"
     emit(
         {
@@ -399,8 +419,7 @@ def status(agent_dir: Path, skill_dir: Path, plist_path: Path) -> int:
         "status": "installed" if installed and not legacy_active else "not-installed",
         "source": str(SKILL_ROOT),
         "extension_target": str(target),
-        "skill_target": str(skill_target),
-        "service": "running" if service_loaded() else "stopped",
+        "service": "running" if service_loaded(plist_label(plist_path)) else "stopped",
         "plist": str(plist_path),
         "legacy_registration_active": legacy_active,
         "legacy_extension_registration_active": legacy_extension_active,
@@ -419,6 +438,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR)
     parser.add_argument("--skill-dir", type=Path, default=DEFAULT_SKILL_DIR)
     parser.add_argument("--plist", type=Path, default=DEFAULT_PLIST)
+    parser.add_argument("--service-label", default=SERVICE_LABEL, help="launchd label written into the plist; tests use a sandbox label")
     parser.add_argument("--legacy-state-dir", type=Path, default=LEGACY_STATE_DIR)
     parser.add_argument("--legacy-project-root", type=Path, default=LEGACY_PROJECT_ROOT)
     parser.add_argument("--skip-service", action="store_true", help="write registration without loading launchd")
@@ -447,6 +467,7 @@ def main() -> int:
             not args.skip_service,
             legacy_state_dir,
             legacy_project_root,
+            args.service_label,
         )
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         emit({"status": "error", "reason": str(error)})

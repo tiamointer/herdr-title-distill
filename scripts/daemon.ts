@@ -16,7 +16,8 @@ function emit(logFile: string, event: ServiceLogEvent): void {
   fs.appendFileSync(logFile, `${JSON.stringify({ timestamp: new Date().toISOString(), ...event })}\n`, "utf8");
 }
 
-const socketPath = process.env.HERDR_TITLE_DISTILL_SOCKET_PATH || process.env.HERDR_SOCKET_PATH || DEFAULT_SOCKET_PATH;
+const configuredSocketPath =
+  process.env.HERDR_TITLE_DISTILL_SOCKET_PATH || process.env.HERDR_SOCKET_PATH || DEFAULT_SOCKET_PATH;
 const stateDir = process.env.HERDR_TITLE_DISTILL_STATE_DIR || DEFAULT_STATE_DIR;
 const logFile = process.env.HERDR_TITLE_DISTILL_LOG || path.join(path.dirname(stateDir), "service.log");
 const pollIntervalMs = Number.parseInt(process.env.HERDR_TITLE_DISTILL_INTERVAL_MS || "750", 10) || 750;
@@ -26,8 +27,15 @@ const rescanIntervalMs =
 // Named herdr sessions live in <herdr-config>/sessions/<name>/herdr.sock; the
 // default session listens on <herdr-config>/herdr.sock. A named session's
 // panes are invisible on the default socket, so the daemon must watch every
-// live session socket, not just the default one.
-const sessionsRoot = path.join(path.dirname(socketPath), "sessions");
+// live session socket, not just the default one. If the configured socket is
+// itself a named-session socket, normalize to the default socket so the
+// session isn't double-counted under the wrong "default" label.
+const sessionsRoot = path.join(path.dirname(DEFAULT_SOCKET_PATH), "sessions");
+const defaultRelative = path.relative(sessionsRoot, configuredSocketPath);
+const socketPath =
+  defaultRelative && !defaultRelative.startsWith("..") && !path.isAbsolute(defaultRelative)
+    ? DEFAULT_SOCKET_PATH
+    : configuredSocketPath;
 
 function socketLabel(candidate: string): string {
   if (candidate === socketPath) return "default";
